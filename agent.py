@@ -160,17 +160,19 @@ def run_agent(task, tracer, fault=None):
     final, failed_hard = "", False
 
     for idx, (name, type_, fn) in enumerate(STEPS):
-        t0, error, tokens = time.time(), None, 0
+        t0, error, tokens = time.perf_counter(), None, 0
         inp = {k: v for k, v in state.items()}          # what this step could see
         try:
             out, tokens = fn(state)
-            if fault and fault[0] == name:                # silently corrupt the output
-                out = FAULTS[name][fault[1]](out, state)
+            latency_ms = (time.perf_counter() - t0) * 1000   # timed BEFORE any fault is applied,
+            if fault and fault[0] == name:                   # so the injected corruption cannot
+                out = FAULTS[name][fault[1]](out, state)     # leak into the latency feature
         except Exception as e:                            # a crash is observable evidence too
+            latency_ms = (time.perf_counter() - t0) * 1000
             out, error, failed_hard = None, f"{type(e).__name__}: {e}", True
         state[name] = out
         tracer.log_step(run_id, idx, name, type_, inp, out, state,
-                        round((time.time() - t0) * 1000, 2), tokens, error)
+                        round(latency_ms, 3), tokens, error)
         if failed_hard:
             break
         final = out if name == "write_answer" else final
