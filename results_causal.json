@@ -1,0 +1,30 @@
+{
+  "n_failed_runs": 41,
+  "methods": {
+    "Random step": {
+      "fixed_first_try": 0.16666666666666674,
+      "avg_replays": 3.5
+    },
+    "Always blame last step": {
+      "fixed_first_try": 0.12195121951219512,
+      "avg_replays": 3.926829268292683
+    },
+    "First logged error": {
+      "fixed_first_try": 0.1951219512195122,
+      "avg_replays": 3.073170731707317
+    },
+    "Black Box": {
+      "fixed_first_try": 0.975609756097561,
+      "avg_replays": 1.024390243902439
+    },
+    "Oracle (true culprit)": {
+      "fixed_first_try": 1.0,
+      "avg_replays": 1.0
+    }
+  },
+  "replay_efficiency": {
+    "avg_steps_executed": 3.2195121951219514,
+    "steps_saved_pct": 0.46341463414634154,
+    "tokens_saved_pct": 0.4327671342350265
+  }
+}
