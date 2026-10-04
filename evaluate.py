@@ -12,7 +12,7 @@ import sys
 import time
 
 from diagnose import (Diagnoser, baseline_scores, evaluate, evaluate_random,
-                      load_runs, split_clean_failed)
+                      load_runs, run_meta, split_clean_failed)
 
 
 def row(name, m):
@@ -20,7 +20,7 @@ def row(name, m):
           f"MRR {m['mrr']:.3f}   AUROC {m['auroc']:.3f}")
 
 
-def main(db, seed=0):
+def main(db, seed=0, out="results.json"):
     runs = load_runs(db)
     rng = random.Random(seed)
     rng.shuffle(runs)
@@ -30,7 +30,7 @@ def main(db, seed=0):
     _, failed_te = split_clean_failed(test)
     print(f"{len(runs)} runs: train has {len(clean_tr)} clean + {len(failed_tr)} failed; "
           f"test has {len(failed_te)} failed runs to diagnose\n")
-    results = {"split": {}, "unseen_fault_types": {}}
+    results = {"meta": None, "split": {}, "unseen_fault_types": {}}
 
     # ---------------- Experiment 1: standard split
     print("EXPERIMENT 1: find the culprit step in failed runs the model has never seen")
@@ -48,6 +48,7 @@ def main(db, seed=0):
     results["split"] = table
 
     main_model = models["Black Box (boosted trees)"]
+    results["meta"] = run_meta(db, len(runs), main_model)
     n_inv = sum(len(v) for v in main_model.miner.invariants.values())
     print(f"\n  Rules learned from successful runs: {n_inv} "
           f"(across {len(main_model.miner.invariants)} steps)")
@@ -79,10 +80,10 @@ def main(db, seed=0):
         for e in s["evidence"][:3]:
             print(f"      - broke rule: {e}")
 
-    with open("results.json", "w") as f:
+    with open(out, "w") as f:
         json.dump(results, f, indent=2)
-    print("\nSaved results.json (use these numbers on your slides)")
+    print(f"\nSaved {out} (use these numbers on your slides)")
 
 
 if __name__ == "__main__":
-    main(sys.argv[1] if len(sys.argv) > 1 else "data_mock.db")
+    main(sys.argv[1] if len(sys.argv) > 1 else "data_mock.db", out=sys.argv[2] if len(sys.argv) > 2 else "results.json")
