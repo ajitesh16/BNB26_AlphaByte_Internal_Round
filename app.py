@@ -246,7 +246,7 @@ def what_if_panel(run, scored, session):
         return
     labels = {"retry": "Unchanged retry", "predicted": "Predicted-step fix", "runner_up": "Runner-up fix"}
     rows = [{"Path": labels[k], "Result": "SUCCESS" if b["success"] else "FAIL", "Re-run": f"{b['executed']}/{b['n_steps']}", "Cached": b["cached"], "Tokens": b["tokens_used"], "Latency": f"{b['latency_ms_used']:.2f} ms"} for k,b in paths.items()]
-    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+    st.dataframe(pd.DataFrame(rows), hide_index=True)
     pred_cmp, run_cmp = compare(run, paths["predicted"]), compare(run, paths["runner_up"])
     p1, p2, p3 = st.columns(3)
     p1.metric("Predicted intervention", "SUCCESS" if paths["predicted"]["success"] else "FAIL")
@@ -255,13 +255,14 @@ def what_if_panel(run, scored, session):
               f"step {pred_cmp['first_divergence']}" if pred_cmp["first_divergence"] is not None else "none")
     matrix = [{"Step": a["name"], "Predicted fix": "CHANGED" if not a["same"] else "same", "Runner-up fix": "CHANGED" if not b["same"] else "same", "Predicted status": a["status"], "Runner-up status": b["status"]} for a,b in zip(pred_cmp["rows"], run_cmp["rows"])]
     st.markdown("**Trace comparison: predicted fix vs runner-up**")
-    st.dataframe(pd.DataFrame(matrix), use_container_width=True, hide_index=True)
+    st.dataframe(pd.DataFrame(matrix), hide_index=True)
     if paths["predicted"]["success"] and not paths["runner_up"]["success"]:
-        st.success("The predicted intervention fixes the failure while the runner-up does not — counterfactual evidence supporting the diagnosis.")
+        st.success("The predicted intervention fixes the failure while the runner-up does not — counterfactual evidence that supports the diagnosis (not proof).")
     elif paths["predicted"]["success"]:
         st.info("The predicted intervention succeeds. Compare the traces above to inspect what changed.")
     else:
-        st.warning("This is a non-repair case: the predicted intervention did not fix the run. Try another held-out failure to demonstrate a successful counterfactual.")
+        extra = " The runner-up step did fix it, so the true culprit was ranked second." if paths["runner_up"]["success"] else ""
+        st.warning("The predicted intervention did not fix this run, so replay does not support the diagnosis here." + extra)
     st.caption("Counterfactual replay supports the diagnosis when the predicted intervention succeeds; it is not proof.")
 
 
@@ -280,7 +281,7 @@ def debug_tab(data):
             "Step": s["name"], "Ranker": f"{s['score']:.0%}",
             "LM surprise z": f"{s['features'].get('lm_nll_z', 0):.2f}",
             "LM max-token surprise": f"{s['features'].get('lm_max_nll', 0):.2f}"
-        } for s in lm_rank]), use_container_width=True, hide_index=True)
+        } for s in lm_rank]), hide_index=True)
     twin = nearest_clean(run, data["clean"])
     expl = build_explanation(run, scored, twin)
 
@@ -342,10 +343,10 @@ def debug_tab(data):
         if cmp["first_divergence"] is not None:
             st.caption(f"The two runs first differ at step {cmp['first_divergence']}. "
                        "Highlighted rows are steps whose output changed.")
-    st.subheader("4. What-If Lab: alternative executions")
+    st.subheader("5. What-If Lab: alternative executions")
     sessions = st.session_state.setdefault("sessions", {})
     what_if_panel(run, scored, sessions.get(run["run_id"], ReplaySession(run)))
-    st.subheader("5. Reports")
+    st.subheader("6. Reports")
     report = to_agent_report(expl)
     with st.expander("Agent-readable report (what Black Box hands back to the agent)"):
         st.code(to_agent_prompt(report))
@@ -487,10 +488,12 @@ def mission_control_tab():
         if unseen:
             unseen_rows = [{"Fault type": k, "Runs": v["n"], "Top-1": f"{v['top1']:.1%}"}
                            for k, v in unseen.items()]
-            st.dataframe(pd.DataFrame(unseen_rows), use_container_width=True, hide_index=True)
+            st.dataframe(pd.DataFrame(unseen_rows), hide_index=True)
         st.markdown("**Counterfactual verification**")
-        st.write("The benchmark compares the predicted intervention against unchanged and runner-up paths.")
-        st.write("A successful intervention is treated as supporting evidence, not proof of causality.")
+        st.write("The causal benchmark patches the step each method blames (Black Box, random, last step, "
+                 "first logged error) and checks whether the run is fixed.")
+        st.write("The What-If Lab lets you try an unchanged retry, the predicted fix and a runner-up fix on any run. "
+                 "A successful intervention supports the diagnosis; it is not proof of causality.")
 
     if lm_ab:
         st.markdown("### Pretrained-model ablation")
@@ -501,7 +504,8 @@ def mission_control_tab():
         st.caption(lm_ab["conclusion"])
 
     st.info(
-        "Benchmark scope: this is a controlled fault-injection benchmark on a deterministic 6-step shopping agent. "
+        "Benchmark scope: this is a controlled fault-injection benchmark on a deterministic 6-step shopping agent, "
+        "generated offline in mock mode (no language-model API calls). "
         "The results demonstrate the debugging workflow and measured replay behavior; they are not a claim of "
         "performance on arbitrary real-world agents."
     )
@@ -516,7 +520,7 @@ def main():
     st.markdown(CSS, unsafe_allow_html=True)
     st.title("Black Box")
     st.markdown("**A flight recorder for AI agents.** It finds the step that broke a run, "
-                "then proves it by replaying a fix.")
+                "then tests the diagnosis by replaying a fix.")
     with st.sidebar:
         st.header("Setup")
         default = "data_mock.db" if os.path.exists("data_mock.db") else "data_real.db"
