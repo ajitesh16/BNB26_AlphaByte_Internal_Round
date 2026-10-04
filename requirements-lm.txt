@@ -1,0 +1,4 @@
+# Optional pretrained causal-LM signal for Black Box
+# Core app does not require these packages.
+torch>=2.1
+transformers>=4.40,<5
