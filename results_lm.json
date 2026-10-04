@@ -1,0 +1,19 @@
+{
+  "db": "data_mock.db",
+  "n": 41,
+  "base_v1": {
+    "top1": 0.975609756097561,
+    "top3": 1.0,
+    "mrr": 0.9878048780487805,
+    "auroc": 0.989767995240928
+  },
+  "base_plus_local_lm": {
+    "top1": 0.975609756097561,
+    "top3": 1.0,
+    "mrr": 0.9878048780487805,
+    "auroc": 0.9851873884592504
+  },
+  "base_seconds": 4.0,
+  "lm_total_seconds": 72.2,
+  "conclusion": "On this controlled benchmark, the local pretrained-LM signal did not improve top-1/top-3/MRR and slightly reduced AUROC, while adding substantial CPU evaluation time. Keep it as an optional auxiliary/ablation signal rather than part of the frozen diagnosis ranker."
+}
