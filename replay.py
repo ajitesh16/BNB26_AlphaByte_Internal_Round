@@ -67,7 +67,7 @@ class ReplaySession:
         self.fault = (STEP_NAMES[c], run["fault_kind"]) if c is not None else None
         self.cache = {}                                       # key -> (output, tokens, error)
         for s in run["steps"]:                                # seed with the original trace
-            self.cache[self._key(s["name"], s["input"], False)] = (s["output"], s["tokens"], s["error"])
+            self.cache[self._key(s["name"], s["input"], False)] = (s["output"], s["tokens"], s["error"], s.get("latency_ms", 0.0))
         self.full_tokens = sum(s["tokens"] for s in run["steps"])
 
     def _key(self, name, state, fixed):
@@ -83,17 +83,44 @@ class ReplaySession:
             out = FAULTS[name][self.fault[1]](out, state)     # the bug is still there
         return out, tokens
 
+    def retry(self):
+        """Full unchanged retry: bypass cache and keep the injected fault."""
+        state = copy.deepcopy(self.run["steps"][0]["input"]) if self.run["steps"] else {"question": self.run.get("task", "")}
+        log, final, crashed = [], "", False
+        tokens_used, latency_used = 0, 0.0
+        for i, (name, type_, _) in enumerate(STEPS):
+            error = None
+            try:
+                t0 = time.perf_counter()
+                out, tok = self._execute(i, state, fixed=False)
+                step_latency_ms = (time.perf_counter() - t0) * 1000
+            except Exception as e:
+                step_latency_ms = (time.perf_counter() - t0) * 1000
+                out, tok, error = None, 0, f"{type(e).__name__}: {e}"
+            state[name] = out
+            tokens_used += tok
+            latency_used += step_latency_ms
+            log.append({"idx": i, "name": name, "type": type_, "status": "recomputed", "output": copy.deepcopy(out), "error": error, "latency_ms": step_latency_ms, "tokens": tok})
+            if error:
+                crashed = True
+                break
+            if name == "write_answer":
+                final = out
+        ok = (not crashed) and grade(self.run["expected"], final)
+        return {"patch": None, "steps": log, "final_answer": str(final), "success": bool(ok), "n_steps": self.n, "restored": 0, "executed": len(log), "cached": 0, "tokens_used": tokens_used, "tokens_full_rerun": self.full_tokens, "tokens_saved_pct": 0.0, "latency_ms_used": latency_used, "latency_ms_full": sum(float(x.get("latency_ms", 0.0)) for x in self.run["steps"]), "latency_saved_pct": 0.0}
+
     def fork(self, patch):
         """Create a new branch of this run with `patch` applied, and return its full result."""
         old, k = self.run["steps"], patch.step_idx
         state = copy.deepcopy(old[k]["input"])                # CHECKPOINT: state before step k
         log = [{"idx": i, "name": old[i]["name"], "type": old[i]["type"], "status": "restored",
-                "output": copy.deepcopy(old[i]["output"]), "error": old[i]["error"]} for i in range(k)]
-        final, crashed, tokens_used = "", False, 0
+                "output": copy.deepcopy(old[i]["output"]), "error": old[i]["error"], "latency_ms": 0.0, "tokens": 0} for i in range(k)]
+        final, crashed, tokens_used, latency_used = "", False, 0, 0.0
 
         for i in range(k, self.n):
             name, type_, _ = STEPS[i]
             error = None
+            step_latency_ms, tok = 0.0, 0
             if i == k and patch.mode == "edit_input" and patch.edits:
                 state.update(copy.deepcopy(patch.edits))
             if i == k and patch.mode == "override":
@@ -103,19 +130,25 @@ class ReplaySession:
                 fixed = forced and patch.mode == "fix"
                 key = self._key(name, state, fixed)
                 if not forced and key in self.cache:
-                    out, _, error = copy.deepcopy(self.cache[key][0]), 0, self.cache[key][2]
+                    out, _, error, _ = copy.deepcopy(self.cache[key])
                     status = "cached"
                 else:
                     try:
+                        t0 = time.perf_counter()
                         out, tok = self._execute(i, state, fixed)
+                        step_latency_ms = (time.perf_counter() - t0) * 1000
                     except Exception as e:
+                        step_latency_ms = (time.perf_counter() - t0) * 1000
                         out, tok, error = None, 0, f"{type(e).__name__}: {e}"
                     tokens_used += tok
-                    self.cache[key] = (copy.deepcopy(out), tok, error)
+                    latency_used += step_latency_ms
+                    self.cache[key] = (copy.deepcopy(out), tok, error, step_latency_ms)
                     status = "patched-rerun" if forced else "recomputed"
             state[name] = out
             log.append({"idx": i, "name": name, "type": type_, "status": status,
-                        "output": copy.deepcopy(out), "error": error})
+                        "output": copy.deepcopy(out), "error": error,
+                        "latency_ms": (step_latency_ms if status in ("recomputed", "patched-rerun") else 0.0),
+                        "tokens": (tok if status in ("recomputed", "patched-rerun") else 0)})
             if error:
                 crashed = True
                 break
@@ -126,10 +159,12 @@ class ReplaySession:
         ok = (not crashed) and grade(self.run["expected"], final)
         return {"patch": patch, "steps": log, "final_answer": str(final), "success": bool(ok),
                 "n_steps": self.n, "restored": k, "executed": executed,
+                "latency_ms_used": latency_used, "latency_ms_full": sum(float(s.get("latency_ms", 0.0)) for s in old),
                 "cached": sum(1 for s in log if s["status"] == "cached"),
                 "steps_saved_pct": 1 - executed / self.n,
                 "tokens_used": tokens_used, "tokens_full_rerun": self.full_tokens,
-                "tokens_saved_pct": (1 - tokens_used / self.full_tokens) if self.full_tokens else 0.0}
+                "tokens_saved_pct": (1 - tokens_used / self.full_tokens) if self.full_tokens else 0.0,
+                "latency_saved_pct": (1 - latency_used / sum(float(s.get("latency_ms", 0.0)) for s in old)) if sum(float(s.get("latency_ms", 0.0)) for s in old) else 0.0}
 
 
 # ------------------------------------------------------------ trace comparison
