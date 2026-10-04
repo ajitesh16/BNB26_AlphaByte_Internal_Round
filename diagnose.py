@@ -18,6 +18,26 @@ FEATURES = (["idx", "rel_pos", "is_llm", "is_retrieval", "is_tool", "has_error",
             ["viol_before", "viol_after", "first_viol", "len_ratio", "latency_z"])
 
 
+FEATURE_SET_ID = "base-v1"        # the frozen feature set behind the 97.6% baseline
+LM_FEATURES = ["lm_nll", "lm_nll_z", "lm_max_nll", "lm_token_count"]
+
+
+def run_meta(db_path, n_runs, model):
+    """Stamp saved with every results file: which data, which features, which model backend."""
+    import hashlib
+    import os
+    import time
+    meta = {"db": os.path.basename(db_path), "n_runs": n_runs, "feature_set": FEATURE_SET_ID,
+            "features_hash": hashlib.sha1(",".join(FEATURES).encode()).hexdigest()[:8],
+            "model_backend": type(model.model).__name__,
+            "evaluated": time.strftime("%Y-%m-%d %H:%M:%S")}
+    side = db_path + ".meta.json"
+    if os.path.exists(side):
+        with open(side) as f:
+            meta["data_mode"] = json.load(f).get("mode", "unknown")
+    return meta
+
+
 def load_runs(db_path):
     t = Tracer(db_path)
     runs = []
@@ -52,16 +72,37 @@ def make_model(name="gbm"):
 
 
 class Diagnoser:
-    def __init__(self, model="gbm"):
+    def __init__(self, model="gbm", use_lm=False, lm_model=None):
         self.model_name = model
+        self.use_lm = bool(use_lm)
+        self.lm_model_name = lm_model
+        self.lm = None
 
     def fit(self, clean_runs, failed_runs):
         self.miner = InvariantMiner().fit(clean_runs)
         self._fit_reference(clean_runs)
+        return self._fit_with_reference(clean_runs, failed_runs)
+
+    def fit_with_base(self, base, clean_runs, failed_runs):
+        """Fit an optional-signal model while reusing the frozen base miner/reference.
+
+        This avoids mining the same invariants twice and keeps the base-v1 benchmark
+        exactly unchanged while running optional LM ablations.
+        """
+        self.miner = base.miner
+        self.ref = base.ref
+        return self._fit_with_reference(clean_runs, failed_runs)
+
+    def _fit_with_reference(self, clean_runs, failed_runs):
+        if self.use_lm:
+            from lm_signal import LocalLMSignal
+            self.lm = LocalLMSignal(self.lm_model_name)
+            self.lm.fit_clean_reference(clean_runs)
+        self.feature_names = FEATURES + (LM_FEATURES if self.use_lm else [])
         X, y = [], []
         for run in failed_runs:
             rows, _ = self.featurize(run)
-            X += [[r[f] for f in FEATURES] for r in rows]
+            X += [[r[f] for f in self.feature_names] for r in rows]
             y += [int(r["idx"] == run["culprit_step"]) for r in rows]
         self.model = make_model(self.model_name).fit(np.array(X), np.array(y))
         return self
@@ -98,15 +139,20 @@ class Diagnoser:
                    "latency_z": float(np.clip((s["latency_ms"] - ref["lat"]) / (1.4826 * ref["mad"] + 1e-3), -5, 5))}
             for k in KINDS:
                 row[f"viol_{k}"] = kinds.get(k, 0)
+            if self.use_lm and self.lm is not None:
+                lm_row = self.lm.features([s])[0]
+                row.update(lm_row)
             rows.append({k: float(v) for k, v in row.items()})
         return rows, checks
 
     def score_run(self, run):
         """Return one dict per step: its suspicion score and the broken rules (evidence)."""
         rows, checks = self.featurize(run)
-        p = self.model.predict_proba(np.array([[r[f] for f in FEATURES] for r in rows]))[:, 1]
-        return [{"step_idx": i, "name": s["name"], "score": float(p[i]),
-                 "evidence": [v.explain() for v in checks[i][0]]}
+        p = self.model.predict_proba(np.array([[r[f] for f in self.feature_names] for r in rows]))[:, 1]
+        return [{"step_idx": i, "name": s["name"], "type": s["type"], "score": float(p[i]),
+                 "evidence": [v.explain() for v in checks[i][0]],
+                 "violations": self.miner.details(s, checks[i][0]) if checks[i][0] else [],
+                 "features": rows[i]}
                 for i, s in enumerate(run["steps"])]
 
     def importances(self):
@@ -118,7 +164,7 @@ class Diagnoser:
         else:
             return None
         vals = vals / (vals.sum() or 1)
-        return sorted(zip(FEATURES, vals), key=lambda t: -t[1])
+        return sorted(zip(self.feature_names, vals), key=lambda t: -t[1])
 
 
 # ------------------------------------------------------------------ baselines
