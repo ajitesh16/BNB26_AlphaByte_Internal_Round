@@ -10,7 +10,7 @@ import json
 import random
 import sys
 
-from diagnose import Diagnoser, baseline_scores, load_runs, split_clean_failed
+from diagnose import Diagnoser, baseline_scores, load_runs, run_meta, split_clean_failed
 from replay import Patch, ReplaySession
 
 
@@ -26,7 +26,7 @@ def attempts(flips, ordering):
     return len(flips)
 
 
-def main(db, seed=0):
+def main(db, seed=0, out_path="results_causal.json"):
     runs = load_runs(db)
     rng = random.Random(seed)
     rng.shuffle(runs)                                    # same split as evaluate.py
@@ -65,7 +65,7 @@ def main(db, seed=0):
     k = len(failed_te)
     print("\nCAUSAL CHECK: patch the step each method blames, replay, did the run get fixed?")
     print(f"  {'method':<26}{'fixed on 1st try':>18}{'avg replays needed':>22}")
-    out = {"n_failed_runs": k, "methods": {}}
+    out = {"meta": run_meta(db, len(runs), model), "n_failed_runs": k, "methods": {}}
     for name, a in acc.items():
         out["methods"][name] = {"fixed_first_try": a["fixed"] / k, "avg_replays": a["attempts"] / k}
         print(f"  {name:<26}{a['fixed'] / k:>18.1%}{a['attempts'] / k:>22.2f}")
@@ -76,10 +76,10 @@ def main(db, seed=0):
     print(f"\nREPLAY EFFICIENCY (applying Black Box's top fix, versus re-running the whole agent)")
     print(f"  steps re-run on average: {eff['executed'] / k:.1f} of 6   "
           f"steps saved: {eff['steps_saved'] / k:.0%}   tokens saved: {eff['tokens_saved'] / k:.0%}")
-    with open("results_causal.json", "w") as f:
+    with open(out_path, "w") as f:
         json.dump(out, f, indent=2)
-    print("\nSaved results_causal.json")
+    print(f"\nSaved {out_path}")
 
 
 if __name__ == "__main__":
-    main(sys.argv[1] if len(sys.argv) > 1 else "data_mock.db")
+    main(sys.argv[1] if len(sys.argv) > 1 else "data_mock.db", out_path=sys.argv[2] if len(sys.argv) > 2 else "results_causal.json")
