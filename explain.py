@@ -208,7 +208,7 @@ def attach_counterfactual(expl, cmp, branch):
     expl["blast_radius"]["observed_count"] = len(changed)
     if patched == k and cmp["flipped"]:
         verdict = (f"Patching step {k} and replaying turned the run from FAILED to SUCCESS. "
-                   "This is counterfactual evidence supporting the diagnosis (not proof).")
+                   "This is counterfactual evidence that supports the diagnosis (not proof).")
     elif patched == k:
         verdict = f"Patching step {k} did not fix the run, so this patch alone does not support the diagnosis."
     elif cmp["flipped"]:
