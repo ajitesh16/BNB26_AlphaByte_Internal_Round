@@ -12,7 +12,9 @@ Examples (PowerShell):
 """
 import argparse
 import collections
+import json
 import random
+import time
 
 from agent import ALL_FAULTS, MODE, run_agent
 from tasks import make_tasks
@@ -58,6 +60,9 @@ def main():
         if i % 25 == 0:
             print(f"  {i}/{args.n} runs done")
     summarize(tracer)
+    with open(args.db + ".meta.json", "w") as f:           # remembers whether this was mock or real
+        json.dump({"mode": MODE, "n": args.n, "seed": args.seed, "fault_rate": args.fault_rate,
+                   "created": time.strftime("%Y-%m-%d %H:%M:%S")}, f, indent=2)
 
 
 if __name__ == "__main__":
